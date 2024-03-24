@@ -1,3 +1,11 @@
+import {
+  RequestResultType,
+  type RequestMessage,
+  type RequestResult,
+  type ResponseMessage,
+  type Unsubscriber,
+} from "../types.ts";
+
 const getMessageId = (() => {
   let messageId = 0n;
   return (useString: boolean = false) => {
@@ -9,19 +17,6 @@ const getMessageId = (() => {
 
 const delay = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
 
-export interface RequestMessage {
-  id: bigint | string;
-  path: string;
-  payload: any;
-}
-
-export interface ResponseMessage {
-  id: bigint | string;
-  ok: boolean;
-  done: boolean;
-  payload: any;
-}
-
 const isResponseMessage = (
   id: bigint | string,
   data: any
@@ -31,33 +26,14 @@ const isResponseMessage = (
   return true;
 };
 
-interface RequestResultCommon {
-  id: bigint | string;
-  path: string;
-}
-export interface RequestResultNonStreaming extends RequestResultCommon {
-  streaming: false;
-  payload: any;
-}
-export interface RequestResultStreaming extends RequestResultCommon {
-  streaming: true;
-  header: any;
-  body: AsyncIterable<any>;
-}
-export type RequestResult = RequestResultNonStreaming | RequestResultStreaming;
-
-export type Unsubscriber = () => void;
-
-export const createRequest = ({
-  path,
-  payload,
+export const createRequest = <T = any>({
+  data,
   transfrer,
   timeout,
   postMessage,
   onMessage,
 }: {
-  path: string;
-  payload?: any;
+  data?: T;
   transfrer?: any[];
   timeout?: number;
   postMessage?(message: unknown, transfer?: unknown[]): void;
@@ -83,21 +59,23 @@ export const createRequest = ({
   });
 
   const unsub = onMessage((msg) => {
-    if (resolved || !isResponseMessage(id, msg)) return;
+    if (resolved || !isResponseMessage(id, msg)) {
+      console.warn("[wheatpaste] Received invalid response message.", msg);
+      return;
+    }
 
     unsub();
     resolved = true;
 
-    const { done, payload, ok } = msg as Partial<ResponseMessage>;
+    const { done, data, ok } = msg as Partial<ResponseMessage>;
     if (!ok) {
-      throw payload;
+      throw data;
     }
     if (done) {
       resolve({
+        type: RequestResultType.OneShot,
         id,
-        path,
-        streaming: false,
-        payload,
+        data,
       });
     } else {
       const messages: Partial<ResponseMessage>[] = [];
@@ -110,18 +88,17 @@ export const createRequest = ({
       });
 
       resolve({
+        type: RequestResultType.Pushing,
         id,
-        path,
-        streaming: true,
-        header: payload,
+        header: data,
         body: (async function* () {
           while (true) {
             while (messages.length > 0) {
-              const { ok, done, payload } = messages.shift() ?? {};
+              const { ok, done, data } = messages.shift() ?? {};
               if (!ok) {
-                throw payload;
+                throw data;
               }
-              yield payload;
+              yield data;
               if (done) {
                 unsub();
                 return;
@@ -139,11 +116,8 @@ export const createRequest = ({
 
   postMessage({
     id,
-    path,
-    payload,
+    data,
   } satisfies RequestMessage);
 
   return promise;
 };
-
-export const createServer = () => {};
